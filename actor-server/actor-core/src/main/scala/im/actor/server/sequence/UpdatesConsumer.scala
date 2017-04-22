@@ -82,6 +82,10 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
     self ! SubscribeToWeak(None)
   }
 
+  def retry(msg: Any) = {
+    system.scheduler.scheduleOnce(UpdatesConsumer.RetryTimeout, self, msg)
+  }
+
   def receive = {
     case SubscribeToSeq ⇒
       if (!subscribedToSeq) {
@@ -116,8 +120,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       userIds foreach { userId ⇒
         presenceExt.subscribe(userId, self) onFailure {
           case e ⇒
-            system.scheduler.scheduleOnce(UpdatesConsumer.RetryTimeout, self,
-              SubscribeToUserPresences(Set(userId)))
+            retry(SubscribeToUserPresences(Set(userId)))
             log.error(e, "Failed to subscribe to user presences")
         }
       }
@@ -125,8 +128,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       userIds foreach { userId ⇒
         presenceExt.unsubscribe(userId, self) onFailure {
           case e ⇒
-            system.scheduler.scheduleOnce(UpdatesConsumer.RetryTimeout, self,
-              UnsubscribeFromUserPresences(Set(userId)))
+            retry(UnsubscribeFromUserPresences(Set(userId)))
             log.error(e, "Failed to unsubscribe from user presences")
         }
       }
