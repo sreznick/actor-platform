@@ -51,11 +51,13 @@ object UpdatesConsumerMessage {
 }
 
 object UpdatesConsumer {
-  def props(userId: Int, authId: Long, session: ActorRef) =
-    Props(classOf[UpdatesConsumer], userId, authId, session)
+  def props(userId: Int, authId: Long, session: ActorRef, customPresenceExt: Option[PresenceExtension] = None) =
+    Props(classOf[UpdatesConsumer], userId, authId, session, customPresenceExt)
 }
 
-private[sequence] class UpdatesConsumer(userId: Int, authId: Long, subscriber: ActorRef) extends Actor with ActorLogging with Stash {
+private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
+                                        subscriber:        ActorRef,
+                                        customPresenceExt: Option[PresenceExtension]) extends Actor with ActorLogging with Stash {
 
   import Presences._
   import UpdatesConsumerMessage._
@@ -63,7 +65,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long, subscriber: A
   implicit val ec: ExecutionContext = context.dispatcher
   implicit val system: ActorSystem = context.system
   implicit val timeout: Timeout = Timeout(5.seconds) // TODO: configurable
-  private val presenceExt = PresenceExtension(system)
+  private val presenceExt = customPresenceExt.getOrElse(PresenceExtension(system))
   private val groupRresenceExt = GroupPresenceExtension(system)
   private val weakUpdatesExt = WeakUpdatesExtension(system)
   private val db = DbExtension(system).db
