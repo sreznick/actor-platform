@@ -4,6 +4,8 @@ import akka.actor._
 import akka.http.scaladsl.util.FastFuture
 import akka.pattern.pipe
 import akka.util.Timeout
+import scala.concurrent.duration._
+import scala.language.postfixOps
 import im.actor.api.rpc.codecs.UpdateBoxCodec
 import im.actor.api.rpc.groups.ApiGroup
 import im.actor.api.rpc.sequence.{ SeqUpdate, FatSeqUpdate, WeakUpdate }
@@ -112,7 +114,8 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       userIds foreach { userId ⇒
         presenceExt.subscribe(userId, self) onFailure {
           case e ⇒
-            self ! SubscribeToUserPresences(Set(userId))
+            system.scheduler.scheduleOnce(1000 milliseconds, self,
+              SubscribeToUserPresences(Set(userId)))
             log.error(e, "Failed to subscribe to user presences")
         }
       }
