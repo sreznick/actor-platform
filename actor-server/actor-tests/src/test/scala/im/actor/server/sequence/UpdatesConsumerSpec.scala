@@ -94,6 +94,36 @@ class FiniteSubscribeFailPE(override val numberOfFails: (Int) ⇒ Int)
   }
 }
 
+class FiniteUnsubscribeFailPE(override val numberOfFails: (Int) ⇒ Int)
+  extends MockPresenceExtension with FiniteFails {
+  val unsubscribeFails = new Counters
+
+  override def unsubscribe(userId: Int, consumer: ActorRef): Future[Unit] = {
+    super.unsubscribe(userId, consumer)
+    Future {
+      finiteThrow(unsubscribeFails, userId)
+    }
+  }
+}
+
+trait Fails {
+  def fail(counters: Counters, key: Int) = {
+    counters.incr(key)
+    throw new RuntimeException()
+  }
+}
+
+class SubscribeFailPE extends MockPresenceExtension with Fails {
+  val subscribeFails = new Counters
+
+  override def subscribe(userId: Int, consumer: ActorRef): Future[Unit] = {
+    super.subscribe(userId, consumer)
+    Future {
+      fail(subscribeFails, userId)
+    }
+  }
+}
+
 final class UpdatesConsumerSpec extends BaseAppSuite(
   ActorSpecification.createSystem(
     ConfigFactory.parseString(""" push.seq-updates-manager.receive-timeout = 1 second """)
@@ -105,6 +135,7 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
   it should "pass with positive PrescenceExtension" in positive
   it should "retry only failed ids for subscribe" in subscribeFiniteFails
+  it should "retry only failed ids for unsubscribe" in unsubscribeFiniteFails
 
   import UpdatesConsumerMessage._
 
@@ -171,4 +202,24 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
       finiteFailsPE.subscribeFails.get(v) shouldEqual oddOrZero(v)
     }
   }
+
+  def unsubscribeFiniteFails() = {
+    val finiteFailsPE = new FiniteUnsubscribeFailPE(oddOrZero)
+    val finiteActor = createUCActor(finiteFailsPE, "unsubscribe-finite")
+
+    for (v ← UserIdsRange) {
+      finiteFailsPE.unsubscribeAttempts.get(v) shouldEqual 0
+      finiteFailsPE.unsubscribeFails.get(v) shouldEqual 0
+    }
+
+    finiteActor ! UnsubscribeFromUserPresences(UserIdsRange.toSet)
+
+    Thread.sleep(1000)
+
+    for (v ← UserIdsRange) {
+      finiteFailsPE.unsubscribeAttempts.get(v) shouldEqual (oddOrZero(v) + 1)
+      finiteFailsPE.unsubscribeFails.get(v) shouldEqual oddOrZero(v)
+    }
+  }
+
 }
