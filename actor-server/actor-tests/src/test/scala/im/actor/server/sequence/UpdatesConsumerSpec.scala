@@ -124,6 +124,17 @@ class SubscribeFailPE extends MockPresenceExtension with Fails {
   }
 }
 
+class UnsubscribeFailPE extends MockPresenceExtension with Fails {
+  val unsubscribeFails = new Counters
+
+  override def unsubscribe(userId: Int, consumer: ActorRef): Future[Unit] = {
+    super.unsubscribe(userId, consumer)
+    Future {
+      fail(unsubscribeFails, userId)
+    }
+  }
+}
+
 final class UpdatesConsumerSpec extends BaseAppSuite(
   ActorSpecification.createSystem(
     ConfigFactory.parseString(""" push.seq-updates-manager.receive-timeout = 1 second """)
@@ -137,6 +148,7 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
   it should "retry only failed ids for subscribe" in subscribeFiniteFails
   it should "retry only failed ids for unsubscribe" in unsubscribeFiniteFails
   it should "retries for subscribe use timeout" in subscribeFails
+  it should "retries for unsubscribe use timeout" in unsubscribeFails
 
   import UpdatesConsumerMessage._
 
@@ -243,6 +255,31 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
     for (v ← UserIdsRange) {
       failsPE.subscribeSingleAttempts.get(v) should be < 10
       failsPE.subscribeSingleAttempts.get(v) should be > 3
+      failsPE.subscribeFails.get(v) should be < 10
+      failsPE.subscribeFails.get(v) should be > 3
+    }
+  }
+
+  def unsubscribeFails() = {
+    val failsPE = new UnsubscribeFailPE
+    val failsActor = createUCActor(failsPE, "unsubscribe-fails")
+
+    for (v ← UserIdsRange) {
+      failsPE.unsubscribeAttempts.get(v) shouldEqual 0
+      failsPE.unsubscribeFails.get(v) shouldEqual 0
+    }
+
+    failsActor ! UnsubscribeFromUserPresences(UserIdsRange.toSet)
+
+    Thread.sleep(5000)
+
+    system.stop(failsActor)
+
+    for (v ← UserIdsRange) {
+      failsPE.unsubscribeAttempts.get(v) should be < 10
+      failsPE.unsubscribeAttempts.get(v) should be > 3
+      failsPE.unsubscribeFails.get(v) should be < 10
+      failsPE.unsubscribeFails.get(v) should be > 3
     }
   }
 
