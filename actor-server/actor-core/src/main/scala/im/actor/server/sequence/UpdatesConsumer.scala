@@ -120,7 +120,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       userIds foreach { userId ⇒
         presenceExt.unsubscribe(userId, self) onFailure {
           case e ⇒
-            self ! cmd
+            self ! UnsubscribeFromUserPresences(Set(userId))
             log.error(e, "Failed to subscribe from user presences")
         }
       }
