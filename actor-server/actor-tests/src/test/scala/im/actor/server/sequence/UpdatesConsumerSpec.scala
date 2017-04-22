@@ -221,6 +221,8 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
       finiteFailsPE.unsubscribeAttempts.get(v) shouldEqual (oddOrZero(v) + 1)
       finiteFailsPE.unsubscribeFails.get(v) shouldEqual oddOrZero(v)
     }
+
+    system.stop(finiteActor)
   }
 
   def subscribeFails() = {
@@ -240,7 +242,7 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
     for (v ← UserIdsRange) {
       failsPE.subscribeSingleAttempts.get(v) should be < 10
-      //finiteFailsPE.subscribeFails.get(v) shouldEqual oddOrZero(v)
+      failsPE.subscribeSingleAttempts.get(v) should be > 3
     }
   }
 
