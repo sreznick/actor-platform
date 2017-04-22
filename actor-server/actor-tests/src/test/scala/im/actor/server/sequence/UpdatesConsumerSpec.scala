@@ -136,6 +136,7 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
   it should "pass with positive PrescenceExtension" in positive
   it should "retry only failed ids for subscribe" in subscribeFiniteFails
   it should "retry only failed ids for unsubscribe" in unsubscribeFiniteFails
+  it should "retries for subscribe use timeout" in subscribeFails
 
   import UpdatesConsumerMessage._
 
@@ -144,7 +145,7 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
     system.actorOf(ucProps, s"updates-consumer-$suffix")
   }
 
-  val UserIdsRange = Range(1, 10)
+  val UserIdsRange = Range(1, 8)
 
   def positive() = {
     val mockPE = new MockPresenceExtension
@@ -195,7 +196,7 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
     finiteActor ! SubscribeToUserPresences(UserIdsRange.toSet)
 
-    Thread.sleep(1000)
+    Thread.sleep(10000)
 
     for (v ← UserIdsRange) {
       finiteFailsPE.subscribeSingleAttempts.get(v) shouldEqual (oddOrZero(v) + 1)
@@ -214,11 +215,32 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
     finiteActor ! UnsubscribeFromUserPresences(UserIdsRange.toSet)
 
-    Thread.sleep(1000)
+    Thread.sleep(10000)
 
     for (v ← UserIdsRange) {
       finiteFailsPE.unsubscribeAttempts.get(v) shouldEqual (oddOrZero(v) + 1)
       finiteFailsPE.unsubscribeFails.get(v) shouldEqual oddOrZero(v)
+    }
+  }
+
+  def subscribeFails() = {
+    val failsPE = new SubscribeFailPE
+    val failsActor = createUCActor(failsPE, "subscribe-fails")
+
+    for (v ← UserIdsRange) {
+      failsPE.subscribeSingleAttempts.get(v) shouldEqual 0
+      failsPE.subscribeFails.get(v) shouldEqual 0
+    }
+
+    failsActor ! SubscribeToUserPresences(UserIdsRange.toSet)
+
+    Thread.sleep(5000)
+
+    system.stop(failsActor)
+
+    for (v ← UserIdsRange) {
+      failsPE.subscribeSingleAttempts.get(v) should be < 10
+      //finiteFailsPE.subscribeFails.get(v) shouldEqual oddOrZero(v)
     }
   }
 
