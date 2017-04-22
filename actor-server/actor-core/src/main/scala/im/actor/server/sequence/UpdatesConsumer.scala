@@ -55,6 +55,8 @@ object UpdatesConsumerMessage {
 object UpdatesConsumer {
   def props(userId: Int, authId: Long, session: ActorRef, customPresenceExt: Option[PresenceExtension] = None) =
     Props(classOf[UpdatesConsumer], userId, authId, session, customPresenceExt)
+
+  val RetryTimeout = 1000 milliseconds
 }
 
 private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
@@ -114,7 +116,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       userIds foreach { userId ⇒
         presenceExt.subscribe(userId, self) onFailure {
           case e ⇒
-            system.scheduler.scheduleOnce(1000 milliseconds, self,
+            system.scheduler.scheduleOnce(UpdatesConsumer.RetryTimeout, self,
               SubscribeToUserPresences(Set(userId)))
             log.error(e, "Failed to subscribe to user presences")
         }
@@ -123,8 +125,9 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       userIds foreach { userId ⇒
         presenceExt.unsubscribe(userId, self) onFailure {
           case e ⇒
-            self ! UnsubscribeFromUserPresences(Set(userId))
-            log.error(e, "Failed to subscribe from user presences")
+            system.scheduler.scheduleOnce(UpdatesConsumer.RetryTimeout, self,
+              UnsubscribeFromUserPresences(Set(userId)))
+            log.error(e, "Failed to unsubscribe from user presences")
         }
       }
     case cmd @ SubscribeToGroupPresences(groupIds) ⇒
