@@ -53,15 +53,18 @@ object UpdatesConsumerMessage {
 }
 
 object UpdatesConsumer {
-  def props(userId: Int, authId: Long, session: ActorRef, customPresenceExt: Option[PresenceExtension] = None) =
-    Props(classOf[UpdatesConsumer], userId, authId, session, customPresenceExt)
+  def props(userId: Int, authId: Long, session: ActorRef,
+            customPresenceExt: Option[PresenceExtension]      = None,
+            groupPresenceExt:  Option[GroupPresenceExtension] = None) =
+    Props(classOf[UpdatesConsumer], userId, authId, session, customPresenceExt, groupPresenceExt)
 
   val RetryTimeout = 1000 milliseconds
 }
 
 private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
                                         subscriber:        ActorRef,
-                                        customPresenceExt: Option[PresenceExtension]) extends Actor with ActorLogging with Stash {
+                                        customPresenceExt: Option[PresenceExtension],
+                                        groupPresenceExt:  Option[GroupPresenceExtension]) extends Actor with ActorLogging with Stash {
 
   import Presences._
   import UpdatesConsumerMessage._
@@ -70,7 +73,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
   implicit val system: ActorSystem = context.system
   implicit val timeout: Timeout = Timeout(5.seconds) // TODO: configurable
   private val presenceExt = customPresenceExt.getOrElse(PresenceExtension(system))
-  private val groupRresenceExt = GroupPresenceExtension(system)
+  private val groupRresenceExt = groupPresenceExt.getOrElse(GroupPresenceExtension(system))
   private val weakUpdatesExt = WeakUpdatesExtension(system)
   private val db = DbExtension(system).db
 
@@ -107,13 +110,13 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
     case SubscribeToWeak(None) ⇒
       weakUpdatesExt.subscribe(authId, self, None) onFailure {
         case e ⇒
-          self ! SubscribeToWeak(None)
+          retry(SubscribeToWeak(None))
           log.error(e, "Failed to subscribe to weak updates")
       }
     case SubscribeToWeak(Some(group)) ⇒
       weakUpdatesExt.subscribe(authId, self, Some(group)) onFailure {
         case e ⇒
-          self ! SubscribeToWeak(Some(group))
+          retry(SubscribeToWeak(Some(group)))
           log.error(e, "Failed to subscribe to weak updates, group: {}", group)
       }
     case cmd @ SubscribeToUserPresences(userIds) ⇒
@@ -136,7 +139,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       groupIds foreach { groupId ⇒
         groupRresenceExt.subscribe(groupId, self) onFailure {
           case e ⇒
-            self ! cmd
+            retry(SubscribeToGroupPresences(Set(groupId)))
             log.error(e, "Failed to subscribe to group presences")
         }
       }
@@ -144,7 +147,7 @@ private[sequence] class UpdatesConsumer(userId: Int, authId: Long,
       groupIds foreach { groupId ⇒
         groupRresenceExt.unsubscribe(groupId, self) onFailure {
           case e ⇒
-            self ! cmd
+            retry(UnsubscribeFromGroupPresences(Set(groupId)))
             log.error(e, "Failed to unsubscribe from group presences")
         }
       }
