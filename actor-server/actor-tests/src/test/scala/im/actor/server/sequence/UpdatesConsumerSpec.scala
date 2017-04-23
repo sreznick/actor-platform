@@ -139,6 +139,30 @@ class FiniteUnsubscribeFailPE(override val numberOfFails: (Int) ⇒ Int)
   }
 }
 
+class FiniteGroupSubscribeFailPE(override val numberOfFails: (Int) ⇒ Int)
+  extends MockGroupPresenceExtension with FiniteFails {
+  val subscribeFails = new Counters
+
+  override def subscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+    super.subscribe(groupId, consumer)
+    Future {
+      finiteThrow(subscribeFails, groupId)
+    }
+  }
+}
+
+class FiniteGroupUnsubscribeFailPE(override val numberOfFails: (Int) ⇒ Int)
+  extends MockGroupPresenceExtension with FiniteFails {
+  val unsubscribeFails = new Counters
+
+  override def unsubscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+    super.unsubscribe(groupId, consumer)
+    Future {
+      finiteThrow(unsubscribeFails, groupId)
+    }
+  }
+}
+
 trait Fails {
   def fail(counters: Counters, key: Int) = {
     counters.incr(key)
@@ -157,6 +181,17 @@ class SubscribeFailPE extends MockPresenceExtension with Fails {
   }
 }
 
+class GroupSubscribeFailPE extends MockGroupPresenceExtension with Fails {
+  val subscribeFails = new Counters
+
+  override def subscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+    super.subscribe(groupId, consumer)
+    Future {
+      fail(subscribeFails, groupId)
+    }
+  }
+}
+
 class UnsubscribeFailPE extends MockPresenceExtension with Fails {
   val unsubscribeFails = new Counters
 
@@ -164,6 +199,17 @@ class UnsubscribeFailPE extends MockPresenceExtension with Fails {
     super.unsubscribe(userId, consumer)
     Future {
       fail(unsubscribeFails, userId)
+    }
+  }
+}
+
+class GroupUnsubscribeFailPE extends MockGroupPresenceExtension with Fails {
+  val unsubscribeFails = new Counters
+
+  override def unsubscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+    super.unsubscribe(groupId, consumer)
+    Future {
+      fail(unsubscribeFails, groupId)
     }
   }
 }
@@ -179,9 +225,13 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
   it should "pass with positive PrescenceExtension" in positive
   it should "retry only failed ids for subscribe" in subscribeFiniteFails
+  it should "retry only failed ids for group subscribe" in groupSubscribeFiniteFails
   it should "retry only failed ids for unsubscribe" in unsubscribeFiniteFails
+  it should "retry only failed ids for group unsubscribe" in groupUnsubscribeFiniteFails
   it should "retries for subscribe use timeout" in subscribeFails
+  it should "retries for group subscribe use timeout" in groupSubscribeFails
   it should "retries for unsubscribe use timeout" in unsubscribeFails
+  it should "retries for group unsubscribe use timeout" in groupUnsubscribeFails
 
   import UpdatesConsumerMessage._
 
@@ -192,6 +242,11 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
   def createUCActor(pe: PresenceExtension, suffix: String) = {
     val ucProps = UpdatesConsumer.props(111, 2345, subscribeActor, Some(pe))
+    system.actorOf(ucProps, s"updates-consumer-$suffix")
+  }
+
+  def createUCActor(gpe: GroupPresenceExtension, suffix: String) = {
+    val ucProps = UpdatesConsumer.props(111, 2345, subscribeActor, None, Some(gpe))
     system.actorOf(ucProps, s"updates-consumer-$suffix")
   }
 
@@ -281,6 +336,29 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
       finiteFailsPE.subscribeSingleAttempts.get(v) shouldEqual (oddOrZero(v) + 1)
       finiteFailsPE.subscribeFails.get(v) shouldEqual oddOrZero(v)
     }
+
+    system.stop(finiteActor)
+  }
+
+  def groupSubscribeFiniteFails() = {
+    val finiteFailsPE = new FiniteGroupSubscribeFailPE(oddOrZero)
+    val finiteActor = createUCActor(finiteFailsPE, "subscribe-finite")
+
+    for (v ← UserIdsRange) {
+      finiteFailsPE.subscribeSingleAttempts.get(v) shouldEqual 0
+      finiteFailsPE.subscribeFails.get(v) shouldEqual 0
+    }
+
+    finiteActor ! SubscribeToGroupPresences(UserIdsRange.toSet)
+
+    Thread.sleep(10000)
+
+    for (v ← UserIdsRange) {
+      finiteFailsPE.subscribeSingleAttempts.get(v) shouldEqual (oddOrZero(v) + 1)
+      finiteFailsPE.subscribeFails.get(v) shouldEqual oddOrZero(v)
+    }
+
+    system.stop(finiteActor)
   }
 
   def unsubscribeFiniteFails() = {
@@ -304,6 +382,27 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
     system.stop(finiteActor)
   }
 
+  def groupUnsubscribeFiniteFails() = {
+    val finiteFailsPE = new FiniteGroupUnsubscribeFailPE(oddOrZero)
+    val finiteActor = createUCActor(finiteFailsPE, "unsubscribe-finite")
+
+    for (v ← UserIdsRange) {
+      finiteFailsPE.unsubscribeAttempts.get(v) shouldEqual 0
+      finiteFailsPE.unsubscribeFails.get(v) shouldEqual 0
+    }
+
+    finiteActor ! UnsubscribeFromGroupPresences(UserIdsRange.toSet)
+
+    Thread.sleep(10000)
+
+    for (v ← UserIdsRange) {
+      finiteFailsPE.unsubscribeAttempts.get(v) shouldEqual (oddOrZero(v) + 1)
+      finiteFailsPE.unsubscribeFails.get(v) shouldEqual oddOrZero(v)
+    }
+
+    system.stop(finiteActor)
+  }
+
   def subscribeFails() = {
     val failsPE = new SubscribeFailPE
     val failsActor = createUCActor(failsPE, "subscribe-fails")
@@ -314,6 +413,29 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
     }
 
     failsActor ! SubscribeToUserPresences(UserIdsRange.toSet)
+
+    Thread.sleep(5000)
+
+    system.stop(failsActor)
+
+    for (v ← UserIdsRange) {
+      failsPE.subscribeSingleAttempts.get(v) should be < 10
+      failsPE.subscribeSingleAttempts.get(v) should be > 3
+      failsPE.subscribeFails.get(v) should be < 10
+      failsPE.subscribeFails.get(v) should be > 3
+    }
+  }
+
+  def groupSubscribeFails() = {
+    val failsPE = new GroupSubscribeFailPE
+    val failsActor = createUCActor(failsPE, "subscribe-fails")
+
+    for (v ← UserIdsRange) {
+      failsPE.subscribeSingleAttempts.get(v) shouldEqual 0
+      failsPE.subscribeFails.get(v) shouldEqual 0
+    }
+
+    failsActor ! SubscribeToGroupPresences(UserIdsRange.toSet)
 
     Thread.sleep(5000)
 
@@ -350,4 +472,26 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
     }
   }
 
+  def groupUnsubscribeFails() = {
+    val failsPE = new GroupUnsubscribeFailPE
+    val failsActor = createUCActor(failsPE, "unsubscribe-fails")
+
+    for (v ← UserIdsRange) {
+      failsPE.unsubscribeAttempts.get(v) shouldEqual 0
+      failsPE.unsubscribeFails.get(v) shouldEqual 0
+    }
+
+    failsActor ! UnsubscribeFromGroupPresences(UserIdsRange.toSet)
+
+    Thread.sleep(5000)
+
+    system.stop(failsActor)
+
+    for (v ← UserIdsRange) {
+      failsPE.unsubscribeAttempts.get(v) should be < 10
+      failsPE.unsubscribeAttempts.get(v) should be > 3
+      failsPE.unsubscribeFails.get(v) should be < 10
+      failsPE.unsubscribeFails.get(v) should be > 3
+    }
+  }
 }
