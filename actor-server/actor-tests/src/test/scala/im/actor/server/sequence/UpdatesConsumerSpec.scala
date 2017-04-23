@@ -13,7 +13,7 @@ import im.actor.server.model.{ SerializedUpdate, UpdateMapping }
 import im.actor.server.persist.sequence.UserSequenceRepo
 import im.actor.server.sequence.UserSequenceCommands.{ DeliverUpdate, Envelope }
 import org.scalatest.time.{ Seconds, Span }
-import im.actor.server.presences.PresenceExtension
+import im.actor.server.presences.{ PresenceExtension, GroupPresenceExtension }
 
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -52,6 +52,39 @@ class MockPresenceExtension extends PresenceExtension {
 
   def presenceSetOffline(userId: Int, authId: Long, timeout: Long): Unit = {
     offlineAttempts.incr(userId)
+  }
+}
+
+class MockGroupPresenceExtension extends GroupPresenceExtension {
+  val subscribeSingleAttempts = new Counters
+  val subscribeMultiAttempts = new Counters
+  val unsubscribeAttempts = new Counters
+  val notifyRemovedAttempts = new Counters
+  val notifyAddedAttempts = new Counters
+
+  override def subscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+    subscribeSingleAttempts.incr(groupId)
+    Future.successful({})
+  }
+
+  override def subscribe(groupIds: Set[Int], consumer: ActorRef): Future[Unit] = {
+    for (groupId ← groupIds) {
+      subscribeMultiAttempts.incr(groupId)
+    }
+    Future.successful({})
+  }
+
+  override def unsubscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+    unsubscribeAttempts.incr(groupId)
+    Future.successful({})
+  }
+
+  def notifyGroupUserAdded(groupId: Int, userId: Int): Unit = {
+    notifyAddedAttempts.incr(groupId)
+  }
+
+  def notifyGroupUserRemoved(groupId: Int, userId: Int): Unit = {
+    notifyRemovedAttempts.incr(groupId)
   }
 }
 
@@ -152,6 +185,11 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
   import UpdatesConsumerMessage._
 
+  def createUCActor(pe: PresenceExtension, gpe: GroupPresenceExtension, suffix: String) = {
+    val ucProps = UpdatesConsumer.props(111, 2345, subscribeActor, Some(pe), Some(gpe))
+    system.actorOf(ucProps, s"updates-consumer-$suffix")
+  }
+
   def createUCActor(pe: PresenceExtension, suffix: String) = {
     val ucProps = UpdatesConsumer.props(111, 2345, subscribeActor, Some(pe))
     system.actorOf(ucProps, s"updates-consumer-$suffix")
@@ -161,11 +199,14 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
 
   def positive() = {
     val mockPE = new MockPresenceExtension
-    val updatesConsumerPositive = createUCActor(mockPE, "positive")
+    val mockGPE = new MockGroupPresenceExtension
+    val updatesConsumerPositive = createUCActor(mockPE, mockGPE, "positive")
 
     for (v ← UserIdsRange) {
       mockPE.subscribeSingleAttempts.get(v) shouldEqual 0
       mockPE.unsubscribeAttempts.get(v) shouldEqual 0
+      mockGPE.subscribeSingleAttempts.get(v) shouldEqual 0
+      mockGPE.unsubscribeAttempts.get(v) shouldEqual 0
     }
 
     updatesConsumerPositive ! SubscribeToUserPresences(UserIdsRange.toSet)
@@ -175,6 +216,8 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
     for (v ← UserIdsRange) {
       mockPE.subscribeSingleAttempts.get(v) shouldEqual 1
       mockPE.unsubscribeAttempts.get(v) shouldEqual 0
+      mockGPE.subscribeSingleAttempts.get(v) shouldEqual 0
+      mockGPE.unsubscribeAttempts.get(v) shouldEqual 0
     }
 
     updatesConsumerPositive ! UnsubscribeFromUserPresences(UserIdsRange.toSet)
@@ -184,9 +227,33 @@ final class UpdatesConsumerSpec extends BaseAppSuite(
     for (v ← UserIdsRange) {
       mockPE.subscribeSingleAttempts.get(v) shouldEqual 1
       mockPE.unsubscribeAttempts.get(v) shouldEqual 1
+      mockGPE.subscribeSingleAttempts.get(v) shouldEqual 0
+      mockGPE.unsubscribeAttempts.get(v) shouldEqual 0
     }
 
+    updatesConsumerPositive ! SubscribeToGroupPresences(UserIdsRange.toSet)
+
     Thread.sleep(1000)
+
+    for (v ← UserIdsRange) {
+      mockPE.subscribeSingleAttempts.get(v) shouldEqual 1
+      mockPE.unsubscribeAttempts.get(v) shouldEqual 1
+      mockGPE.subscribeSingleAttempts.get(v) shouldEqual 1
+      mockGPE.unsubscribeAttempts.get(v) shouldEqual 0
+    }
+
+    updatesConsumerPositive ! UnsubscribeFromGroupPresences(UserIdsRange.toSet)
+
+    Thread.sleep(1000)
+
+    for (v ← UserIdsRange) {
+      mockPE.subscribeSingleAttempts.get(v) shouldEqual 1
+      mockPE.unsubscribeAttempts.get(v) shouldEqual 1
+      mockGPE.subscribeSingleAttempts.get(v) shouldEqual 1
+      mockGPE.unsubscribeAttempts.get(v) shouldEqual 1
+    }
+
+    system.stop(updatesConsumerPositive)
   }
 
   def oddOrZero(v: Int): Int = {
