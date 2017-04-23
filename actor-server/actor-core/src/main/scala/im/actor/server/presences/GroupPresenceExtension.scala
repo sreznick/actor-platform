@@ -7,7 +7,17 @@ import akka.util.Timeout
 import scala.concurrent.Future
 import scala.concurrent.duration._
 
-sealed trait GroupPresenceExtension extends Extension
+trait GroupPresenceExtension extends Extension {
+  def subscribe(groupId: Int, consumer: ActorRef): Future[Unit]
+
+  def subscribe(groupIds: Set[Int], consumer: ActorRef): Future[Unit]
+
+  def unsubscribe(groupId: Int, consumer: ActorRef): Future[Unit]
+
+  def notifyGroupUserAdded(groupId: Int, userId: Int): Unit
+
+  def notifyGroupUserRemoved(groupId: Int, userId: Int): Unit
+}
 
 class GroupPresenceExtensionImpl(system: ActorSystem) extends GroupPresenceExtension {
   import GroupPresenceManager._
@@ -16,22 +26,22 @@ class GroupPresenceExtensionImpl(system: ActorSystem) extends GroupPresenceExten
 
   private val region = GroupPresenceManagerRegion.startRegion()(system)
 
-  def subscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+  override def subscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
     region.ref.ask(Envelope(groupId, Subscribe(consumer))).mapTo[SubscribeAck].map(_ ⇒ ())
   }
 
-  def subscribe(groupIds: Set[Int], consumer: ActorRef): Future[Unit] =
+  override def subscribe(groupIds: Set[Int], consumer: ActorRef): Future[Unit] =
     Future.sequence(groupIds map (subscribe(_, consumer))) map (_ ⇒ ())
 
-  def unsubscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
+  override def unsubscribe(groupId: Int, consumer: ActorRef): Future[Unit] = {
     region.ref.ask(Envelope(groupId, Unsubscribe(consumer))).mapTo[UnsubscribeAck].map(_ ⇒ ())
   }
 
-  def notifyGroupUserAdded(groupId: Int, userId: Int): Unit = {
+  override def notifyGroupUserAdded(groupId: Int, userId: Int): Unit = {
     region.ref ! Envelope(groupId, UserAdded(userId))
   }
 
-  def notifyGroupUserRemoved(groupId: Int, userId: Int): Unit = {
+  override def notifyGroupUserRemoved(groupId: Int, userId: Int): Unit = {
     region.ref ! Envelope(groupId, UserRemoved(userId))
   }
 
